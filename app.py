@@ -14,6 +14,63 @@ st.set_page_config(
 )
 
 # ==============================================================================
+# 모바일 홈화면 (PWA) 아이콘 및 이름 커스터마이징 (스트림릿 기본 로고 지우기)
+# ==============================================================================
+import streamlit.components.v1 as components
+
+components.html("""
+<script>
+    const doc = window.parent.document;
+    
+    // 1. 홈 화면에 저장될 때 보여질 앱 이름 (크롬/사파리 모두 적용)
+    let metaName = doc.querySelector("meta[name='apple-mobile-web-app-title']");
+    if (!metaName) {
+        metaName = doc.createElement('meta');
+        metaName.name = "apple-mobile-web-app-title";
+        doc.head.appendChild(metaName);
+    }
+    metaName.content = "메뉴추천월드컵"; // 바탕화면에 뜰 이름
+
+    // 2. 홈 화면용 고해상도 앱 아이콘 즉석 제작 (캔버스 활용)
+    const canvas = doc.createElement('canvas');
+    canvas.width = 192;
+    canvas.height = 192;
+    const ctx = canvas.getContext('2d');
+    
+    // 아름다운 앱 아이콘 배경 그라데이션
+    const grad = ctx.createLinearGradient(0,0, 192, 192);
+    grad.addColorStop(0, '#FF416C'); // 핫핑크
+    grad.addColorStop(1, '#FF4B2B'); // 오렌지
+    ctx.fillStyle = grad;
+    
+    // iOS 스타일 둥근 모서리 강제 적용
+    ctx.beginPath();
+    ctx.moveTo(40, 0); ctx.lineTo(152, 0); ctx.quadraticCurveTo(192, 0, 192, 40);
+    ctx.lineTo(192, 152); ctx.quadraticCurveTo(192, 192, 152, 192);
+    ctx.lineTo(40, 192); ctx.quadraticCurveTo(0, 192, 0, 152);
+    ctx.lineTo(0, 40); ctx.quadraticCurveTo(0, 0, 40, 0);
+    ctx.fill();
+    
+    // 가운데 텍스트(이모티콘) 삽입
+    ctx.font = '100px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🍽️', 96, 106);
+    
+    const iconUrl = canvas.toDataURL('image/png');
+    
+    // 기존 Streamlit 기본 아이콘 날리기
+    doc.querySelectorAll("link[rel*='icon']").forEach(e => e.remove());
+    
+    // 새로운 커스텀 아이콘 강제 주입
+    const appleIcon = doc.createElement('link');
+    appleIcon.rel = 'apple-touch-icon';
+    appleIcon.href = iconUrl;
+    doc.head.appendChild(appleIcon);
+</script>
+""", height=0)
+
+# ==============================================================================
 # 0. 데이터 준비 (Mock Data)
 # 실제 서비스에서는 데이터베이스(DB)에서 가져오지만, 여기서는 리스트 형태로 준비합니다.
 # 다양한 음식 객체(딕셔너리)를 리스트에 담아둡니다.
@@ -36,6 +93,14 @@ except FileNotFoundError:
 # ==============================================================================
 st.markdown("""
 <style>
+    /* ==============================================================================
+       Streamlit 기본 UI/워터마크 완벽 제거 (앱을 더 네이티브하게 보이게 함)
+    ============================================================================== */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stDeployButton {display:none;}
+
     /* 프로필 및 전체적인 폰트 변경 구역 (옵션) */
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap');
     html, body, [class*="css"]  {
@@ -123,7 +188,17 @@ st.markdown("""
 # 1. 자동 감지 기능 함수 (모바일 위치, 날씨 & 시간)
 # ==============================================================================
 def get_client_ip():
-    """웹 서버(클라우드) 환경에서 접속한 사용자(모바일)의 실제 IP를 추출합니다."""
+    """웹 서버 통신 외에 클라이언트 JS를 통해 스마트폰의 실제 공인 IP를 직접 가져옵니다 (옵션 A 우회 방식)."""
+    try:
+        from streamlit_javascript import st_javascript
+        # 클라이언트 브라우저가 직접 ipify 서버를 호출하여 진짜 내 기기의 IP를 가져옴 (팝업 없음)
+        js_ip = st_javascript("fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip)")
+        if js_ip and js_ip != 0:
+            return js_ip
+    except ImportError:
+        pass
+        
+    # JS 조회 직후(로딩 중)이거나 라이브러리가 없을 때의 기존 방식 (Fallback)
     if hasattr(st, "context") and hasattr(st.context, "headers"):
         h = st.context.headers
         if "X-Forwarded-For" in h:
@@ -415,29 +490,45 @@ with tab_worldcup:
             st.button("🔄 월드컵 다시 하기", on_click=reset_worldcup, use_container_width=True)
 
         else:
-            round_name = "결승" if st.session_state.wc_round == 2 else f"{st.session_state.wc_round}강"
+            round_name = "결승전" if st.session_state.wc_round == 2 else f"{st.session_state.wc_round}강"
             match_idx = st.session_state.wc_match_idx
             total_matches = len(st.session_state.wc_matches)
             
-            st.write(f"### ⚔️ {round_name} ({match_idx+1}/{total_matches} 매치)")
+            st.markdown(f"""
+            <div style="background: linear-gradient(135deg, #2b5876 0%, #4e4376 100%); color: white; padding: 15px; border-radius: 12px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <h2 style="margin: 0; font-size: 26px; font-weight: 900;">🏆 {round_name}</h2>
+                <p style="margin: 5px 0 0 0; font-size: 16px; opacity: 0.9;">현재 <b>{match_idx + 1}</b> / {total_matches} 번째 매치 통과중</p>
+            </div>
+            """, unsafe_allow_html=True)
             st.progress((match_idx) / total_matches)
             
             match = st.session_state.wc_matches[match_idx]
             food_a, food_b = match[0], match[1]
             
-            wc_col1, wc_col2 = st.columns(2)
-            
-            def render_food_card(food_item):
-                return f'''<div class="food-card">
-{get_dynamic_placeholder(food_item, "150px")}
-<div class="food-title">{food_item['name']}</div>
-<div class="food-desc">{food_item['desc']}</div>
-</div>'''
+            def render_compact_card(food_item):
+                cat = food_item.get("category", "기타")
+                if cat == "한식": bg, emoji = "linear-gradient(135deg, #ff9a44 0%, #fc6076 100%)", "🥘"
+                elif cat == "일식": bg, emoji = "linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%)", "🍣"
+                elif cat == "중식": bg, emoji = "linear-gradient(135deg, #ff0844 0%, #ffb199 100%)", "🥟"
+                elif cat == "양식": bg, emoji = "linear-gradient(135deg, #f6d365 0%, #fda085 100%)", "🍝"
+                else: bg, emoji = "linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%)", "🌮"
 
-            with wc_col1:
-                st.markdown(render_food_card(food_a), unsafe_allow_html=True)
-                st.button(f"❌ '{food_a['name']}' 탈락시키기", key=f"drop_a_{st.session_state.wc_round}_{match_idx}", on_click=eliminate, args=(0,), use_container_width=True)
-                
-            with wc_col2:
-                st.markdown(render_food_card(food_b), unsafe_allow_html=True)
-                st.button(f"❌ '{food_b['name']}' 탈락시키기", key=f"drop_b_{st.session_state.wc_round}_{match_idx}", on_click=eliminate, args=(1,), use_container_width=True)
+                return f"""
+                <div style="display: flex; align-items: center; background: #fff; padding: 12px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); margin-bottom: 5px;">
+                    <div style="background: {bg}; border-radius: 10px; min-width: 65px; height: 65px; display: flex; align-items: center; justify-content: center; font-size: 35px; margin-right: 15px; box-shadow: inset 0 0 5px rgba(0,0,0,0.1);">
+                        {emoji}
+                    </div>
+                    <div style="flex-grow: 1; overflow: hidden;">
+                        <h4 style="margin: 0; font-size: 18px; color: #2C3E50; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{food_item['name']}</h4>
+                        <p style="margin: 4px 0 0 0; font-size: 13px; color: #7F8C8D; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{food_item['desc']}</p>
+                    </div>
+                </div>
+                """
+
+            st.markdown(render_compact_card(food_a), unsafe_allow_html=True)
+            st.button(f"👆 위에 있는 '{food_a['name']}' ❌ 탈락시키기", key=f"drop_a_{st.session_state.wc_round}_{match_idx}", on_click=eliminate, args=(0,), use_container_width=True)
+            
+            st.markdown("<div style='text-align:center; font-size:24px; font-weight:900; margin: 15px 0; color:#E74C3C;'>VS</div>", unsafe_allow_html=True)
+
+            st.markdown(render_compact_card(food_b), unsafe_allow_html=True)
+            st.button(f"👆 위에 있는 '{food_b['name']}' ❌ 탈락시키기", key=f"drop_b_{st.session_state.wc_round}_{match_idx}", on_click=eliminate, args=(1,), use_container_width=True)
