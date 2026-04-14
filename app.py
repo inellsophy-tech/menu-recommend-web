@@ -100,6 +100,12 @@ st.markdown("""
     footer {visibility: hidden;}
     header {visibility: hidden;}
     .stDeployButton {display:none;}
+    
+    /* 1. 화면 맨 윗부분 텅 빈 여백 완전히 없애기 */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 2rem !important;
+    }
 
     /* 프로필 및 전체적인 폰트 변경 구역 (옵션) */
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap');
@@ -187,60 +193,42 @@ st.markdown("""
 # ==============================================================================
 # 1. 자동 감지 기능 함수 (모바일 위치, 날씨 & 시간)
 # ==============================================================================
-def get_client_ip():
-    """웹 서버 통신 외에 클라이언트 JS를 통해 스마트폰의 실제 공인 IP를 직접 가져옵니다 (옵션 A 우회 방식)."""
-    try:
-        from streamlit_javascript import st_javascript
-        # 클라이언트 브라우저가 직접 ipify 서버를 호출하여 진짜 내 기기의 IP를 가져옴 (팝업 없음)
-        js_ip = st_javascript("fetch('https://api.ipify.org?format=json').then(r => r.json()).then(d => d.ip)")
-        if js_ip and js_ip != 0:
-            return js_ip
-    except ImportError:
-        pass
-        
-    # JS 조회 직후(로딩 중)이거나 라이브러리가 없을 때의 기존 방식 (Fallback)
-    if hasattr(st, "context") and hasattr(st.context, "headers"):
-        h = st.context.headers
-        if "X-Forwarded-For" in h:
-            return h["X-Forwarded-For"].split(",")[0].strip()
-    return ""
-
-@st.cache_data(ttl=3600)  # 동일 IP면 캐싱
-def get_user_location_and_weather(client_ip=""):
-    """사용자의 실제 IP를 바탕으로 정확한 현지 국가/도시, 날씨 및 시간대 정보를 반환합니다."""
-    location = "위치 자동 감지 실패 📍"
+@st.cache_data(ttl=3600)  # 동일 좌표면 캐싱
+def get_user_location_and_weather_by_coords(lat, lon):
+    """실제 GPS 위도/경도를 바탕으로 동 지명, 날씨 정보를 반환합니다."""
+    location = "정확한 위치 📍"
     weather = "날씨 정보 없음 ☁️"
-    tz_name = None
     try:
-        url = f'http://ip-api.com/json/{client_ip}' if client_ip else 'http://ip-api.com/json/'
-        response = requests.get(url, timeout=3)
-        data = response.json()
-        if data['status'] == 'success':
-            location = f"{data['country']}, {data['city']} 📍"
-            lat = data['lat']
-            lon = data['lon']
-            tz_name = data.get('timezone')
+        # 빅데이터클라우드 무료 Geocoding API (한국어 지원, 제한 없음)
+        geo_url = f"https://api.bigdatacloud.net/data/reverse-geocode-client?latitude={lat}&longitude={lon}&localityLanguage=ko"
+        geo_res = requests.get(geo_url, timeout=3).json()
+        city = geo_res.get('city', '')
+        if not city: city = geo_res.get('locality', '알 수 없는 지역')
+        country = geo_res.get('countryName', '한국')
+        
+        if country and city:
+            location = f"{country}, {city} 📍"
             
-            # Open-Meteo 무료 API
-            weather_resp = requests.get(f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true', timeout=3)
-            if weather_resp.status_code == 200:
-                w_data = weather_resp.json()
-                if 'current_weather' in w_data:
-                    temp = w_data['current_weather']['temperature']
-                    code = w_data['current_weather']['weathercode']
-                    
-                    if code == 0: icon = "☀️"
-                    elif 1 <= code <= 3: icon = "⛅"
-                    elif 45 <= code <= 48: icon = "🌫️"
-                    elif 51 <= code <= 67: icon = "🌧️"
-                    elif 71 <= code <= 77: icon = "❄️"
-                    elif 80 <= code <= 99: icon = "⛈️"
-                    else: icon = "☁️"
-                    
-                    weather = f"{temp}℃ {icon}"
-    except Exception as e:
+        # Open-Meteo 무료 API
+        weather_resp = requests.get(f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true', timeout=3)
+        if weather_resp.status_code == 200:
+            w_data = weather_resp.json()
+            if 'current_weather' in w_data:
+                temp = w_data['current_weather']['temperature']
+                code = w_data['current_weather']['weathercode']
+                
+                if code == 0: icon = "☀️"
+                elif 1 <= code <= 3: icon = "⛅"
+                elif 45 <= code <= 48: icon = "🌫️"
+                elif 51 <= code <= 67: icon = "🌧️"
+                elif 71 <= code <= 77: icon = "❄️"
+                elif 80 <= code <= 99: icon = "⛈️"
+                else: icon = "☁️"
+                
+                weather = f"{temp}℃ {icon}"
+    except Exception:
         pass
-    return location, weather, tz_name
+    return location, weather
 
 def get_current_time_info(tz_name=None):
     """현지 시간(Timezone)을 기반으로 시간대를 판별합니다."""
@@ -277,13 +265,32 @@ st.title("🍽️ 맞춤 메뉴 추천")
 st.markdown("당신의 상황과 취향을 분석하여 완벽한 식사를 추천해 드릴게요!")
 
 # 상단 상태 알림 배너 (위치, 날씨, 시간)
-client_ip = get_client_ip()
-location, weather, tz_name = get_user_location_and_weather(client_ip)
-time_context = get_current_time_info(tz_name)
+location, weather = "위치 동의 대기중 📍", "날씨 조회 대기중 ☁️"
+time_context = "시간 확인 중 ⏳"
+
+try:
+    from streamlit_js_eval import get_geolocation, streamlit_js_eval
+    
+    # 1. 브라우저 내부 시간대 가져오기 (권한 필요 없음)
+    tz_name = streamlit_js_eval(js_expressions='Intl.DateTimeFormat().resolvedOptions().timeZone', key='tz')
+    time_context = get_current_time_info(tz_name if tz_name else None)
+        
+    # 2. 브라우저 GPS 위치 권한 요청 및 날씨/지역 획득
+    loc_data = get_geolocation()
+    if loc_data and 'coords' in loc_data:
+        lat = loc_data['coords']['latitude']
+        lon = loc_data['coords']['longitude']
+        location, weather = get_user_location_and_weather_by_coords(lat, lon)
+    else:
+        location = "위치 팝업 창 정보 허용을 눌러주세요 📍"
+
+except ImportError:
+    location = "GPS 라이브러리가 없습니다 📍"
+    time_context = get_current_time_info()
 
 st.markdown(f"""
 <div class="status-banner">
-    현재 감지 👉 {location} | 날씨: {weather} | 시간대: {time_context}
+    현재 상태 👉 {location} | 날씨: {weather} | 시간대: {time_context}
 </div>
 """, unsafe_allow_html=True)
 
@@ -532,3 +539,19 @@ with tab_worldcup:
 
             st.markdown(render_compact_card(food_b), unsafe_allow_html=True)
             st.button(f"👆 위에 있는 '{food_b['name']}' ❌ 탈락시키기", key=f"drop_b_{st.session_state.wc_round}_{match_idx}", on_click=eliminate, args=(1,), use_container_width=True)
+
+# ==============================================================================
+# 앱 하단: 바로가기 설치 안내 버튼
+# ==============================================================================
+st.write("---")
+if st.button("📲 홈 화면에 바로가기 앱으로 설치하기", use_container_width=True):
+    st.success("""
+    **💡 10초 만에 홈 화면에 설치하는 방법**  
+    스토어를 거치지 않고 바로 내 폰 바탕화면에 추가할 수 있습니다!
+    
+    🍎 **아이폰(Safari):**  
+    화면 맨 아래쪽 중앙의 **[공유]**(네모 위 화살표) 버튼을 누르고, 메뉴를 내려서 **[홈 화면에 추가]**를 선택하세요.
+    
+    🤖 **안드로이드(Chrome):**  
+    화면 우측 상단의 **[⋮]**(점 3개) 버튼을 누르고, **[홈 화면에 추가]**를 선택하세요.
+    """)
